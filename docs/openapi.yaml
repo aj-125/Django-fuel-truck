@@ -1,0 +1,238 @@
+openapi: 3.0.3
+info:
+  title: Fuel Route API
+  version: 1.0.0
+  description: Plans a driving route between two US locations and returns the cheapest
+    fuel stops for a 500-mile-range, 10 MPG vehicle.
+paths:
+  /api/route/:
+    post:
+      operationId: plan_route
+      description: Geocodes `start` and `finish`, fetches the driving route, and returns
+        the minimum-cost set of fuel stops for a vehicle with a 500-mile range at
+        10 MPG. The vehicle is assumed to depart with a full tank, so trips under
+        500 miles need no stops. Makes 3 external calls (2 geocode, 1 route) regardless
+        of distance.
+      summary: Plan a route with the cheapest fuel stops
+      tags:
+      - route
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteRequest'
+            examples:
+              ChicagoToDallas:
+                value:
+                  start: Chicago, IL
+                  finish: Dallas, TX
+                summary: Chicago to Dallas
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteResponse'
+              examples:
+                ChicagoToDallas:
+                  value:
+                    total_distance_miles: 966.9
+                    total_fuel_cost: 134.77
+                    route_geometry:
+                      type: LineString
+                      coordinates:
+                      - - -87.624351
+                        - 41.875563
+                      - - -87.624983
+                        - 41.719186
+                      - - -87.866987
+                        - 41.219737
+                    fuel_stops:
+                    - name: 'HUCKS FOOD & FUEL #379'
+                      city: Marion
+                      state: IL
+                      price_per_gallon: 2.929
+                      mile_marker: 313.8
+                      gallons_purchased: 29.23
+                      cost: 85.61
+                      latitude: 37.7257
+                      longitude: -88.9294
+                    - name: 'Quiktrip #7900'
+                      city: Texarkana
+                      state: TX
+                      price_per_gallon: 2.857
+                      mile_marker: 792.3
+                      gallons_purchased: 1.03
+                      cost: 2.94
+                      latitude: 33.435983
+                      longitude: -94.078233
+                    - name: EXTRA MILE TRUCK STOP
+                      city: Hooks
+                      state: TX
+                      price_per_gallon: 2.817
+                      mile_marker: 802.6
+                      gallons_purchased: 12.35
+                      cost: 34.79
+                      latitude: 33.5253
+                      longitude: -94.2657
+                    - name: CADOO MILLS
+                      city: Caddo Mills
+                      state: TX
+                      price_per_gallon: 2.801
+                      mile_marker: 926.1
+                      gallons_purchased: 4.08
+                      cost: 11.43
+                      latitude: 33.0683
+                      longitude: -96.2391
+                  summary: Chicago to Dallas
+                  description: Real response; `route_geometry.coordinates` truncated
+                    to the first 3 points.
+          description: Route and fuel plan. `total_fuel_cost` is exactly the sum of
+            the stops' `cost`.
+        '400':
+          description: Field validation failed, or a location could not be found in
+            the USA.
+        '422':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: No drivable route, or a stretch with no fuel station in range.
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The geocoding or routing provider is unavailable.
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+      - error
+    FuelStop:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Truck stop name from the fuel price list.
+        city:
+          type: string
+        state:
+          type: string
+          description: Two-letter US state code.
+        price_per_gallon:
+          type: number
+          format: double
+          maximum: 1000
+          minimum: -1000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
+          description: Retail diesel price, USD.
+        mile_marker:
+          type: number
+          format: double
+          description: Distance from the start along the route, in miles.
+        gallons_purchased:
+          type: number
+          format: double
+          maximum: 10000
+          minimum: -10000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
+        cost:
+          type: number
+          format: double
+          maximum: 1000000
+          minimum: -1000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
+          description: '`gallons_purchased` x `price_per_gallon`, USD.'
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+      required:
+      - city
+      - cost
+      - gallons_purchased
+      - latitude
+      - longitude
+      - mile_marker
+      - name
+      - price_per_gallon
+      - state
+    LineString:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/TypeEnum'
+        coordinates:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+              format: double
+            maxItems: 2
+            minItems: 2
+          description: 'GeoJSON order: `[longitude, latitude]`.'
+      required:
+      - coordinates
+      - type
+    RouteRequest:
+      type: object
+      properties:
+        start:
+          type: string
+          description: Starting location in the USA, e.g. `Chicago, IL`.
+          maxLength: 200
+        finish:
+          type: string
+          description: Destination in the USA, e.g. `Dallas, TX`.
+          maxLength: 200
+      required:
+      - finish
+      - start
+    RouteResponse:
+      type: object
+      properties:
+        total_distance_miles:
+          type: number
+          format: double
+          description: Driving distance reported by the router.
+        total_fuel_cost:
+          type: number
+          format: double
+          maximum: 100000000
+          minimum: -100000000
+          exclusiveMaximum: true
+          exclusiveMinimum: true
+          description: Sum of all stop costs, USD.
+        route_geometry:
+          allOf:
+          - $ref: '#/components/schemas/LineString'
+          description: The driving route as a GeoJSON LineString.
+        fuel_stops:
+          type: array
+          items:
+            $ref: '#/components/schemas/FuelStop'
+          description: Stations where fuel is purchased, in driving order.
+      required:
+      - fuel_stops
+      - route_geometry
+      - total_distance_miles
+      - total_fuel_cost
+    TypeEnum:
+      enum:
+      - LineString
+      type: string
+      description: '* `LineString` - LineString'

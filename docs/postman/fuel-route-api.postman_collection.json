@@ -1,0 +1,547 @@
+{
+  "info": {
+    "name": "Fuel Route API",
+    "description": "Plans a driving route between two US locations and returns the minimum-cost fuel stops for a 500-mile-range, 10 MPG truck.\n\nStart the server (`python manage.py runserver`), then run the whole collection. Set `baseUrl` if the server isn't on http://127.0.0.1:8000.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "routeResponseSchema",
+      "value": "{\"type\": \"object\", \"required\": [\"total_distance_miles\", \"total_fuel_cost\", \"route_geometry\", \"fuel_stops\"], \"properties\": {\"total_distance_miles\": {\"type\": \"number\", \"minimum\": 0}, \"total_fuel_cost\": {\"type\": \"number\", \"minimum\": 0}, \"route_geometry\": {\"type\": \"object\", \"required\": [\"type\", \"coordinates\"], \"properties\": {\"type\": {\"const\": \"LineString\"}, \"coordinates\": {\"type\": \"array\", \"minItems\": 2, \"items\": {\"type\": \"array\", \"minItems\": 2, \"maxItems\": 2, \"items\": {\"type\": \"number\"}}}}}, \"fuel_stops\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"required\": [\"name\", \"city\", \"state\", \"price_per_gallon\", \"mile_marker\", \"gallons_purchased\", \"cost\", \"latitude\", \"longitude\"], \"properties\": {\"name\": {\"type\": \"string\"}, \"city\": {\"type\": \"string\"}, \"state\": {\"type\": \"string\", \"pattern\": \"^[A-Z]{2}$\"}, \"price_per_gallon\": {\"type\": \"number\", \"exclusiveMinimum\": 0}, \"mile_marker\": {\"type\": \"number\", \"minimum\": 0}, \"gallons_purchased\": {\"type\": \"number\", \"exclusiveMinimum\": 0, \"maximum\": 50}, \"cost\": {\"type\": \"number\", \"exclusiveMinimum\": 0}, \"latitude\": {\"type\": \"number\"}, \"longitude\": {\"type\": \"number\"}}}}}}"
+    }
+  ],
+  "item": [
+    {
+      "name": "Plan a route",
+      "item": [
+        {
+          "name": "Long trip: Chicago -> Dallas",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"responds within 3s\", () => pm.expect(pm.response.responseTime).to.be.below(3000));",
+                  "",
+                  "const body = pm.response.json();",
+                  "const stops = body.fuel_stops;",
+                  "",
+                  "pm.test(\"matches the response contract\", () => {",
+                  "    pm.response.to.have.jsonSchema(JSON.parse(pm.collectionVariables.get(\"routeResponseSchema\")));",
+                  "});",
+                  "",
+                  "pm.test(\"total_fuel_cost equals the sum of stop costs\", () => {",
+                  "    const sum = stops.reduce((acc, s) => acc + s.cost, 0);",
+                  "    pm.expect(body.total_fuel_cost).to.be.closeTo(sum, 0.005);",
+                  "});",
+                  "",
+                  "pm.test(\"stops are in driving order and within the trip\", () => {",
+                  "    stops.forEach((s, i) => {",
+                  "        pm.expect(s.mile_marker).to.be.within(0, body.total_distance_miles);",
+                  "        if (i > 0) pm.expect(s.mile_marker).to.be.at.least(stops[i - 1].mile_marker);",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test(\"buys exactly the fuel the trip needs (starts full, arrives empty)\", () => {",
+                  "    const bought = stops.reduce((acc, s) => acc + s.gallons_purchased, 0);",
+                  "    const needed = Math.max(0, (body.total_distance_miles - 500) / 10);",
+                  "    pm.expect(bought).to.be.closeTo(needed, 0.01 * stops.length + 0.06);",
+                  "});",
+                  "",
+                  "pm.test(\"each stop's cost is gallons x price\", () => {",
+                  "    stops.forEach((s) => pm.expect(s.cost).to.be.closeTo(s.gallons_purchased * s.price_per_gallon, 0.006));",
+                  "});",
+                  "pm.test(\"a ~970 mile trip needs at least one stop\", () => pm.expect(stops.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"Chicago, IL\",\n  \"finish\": \"Dallas, TX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "~970 miles, so at least one fuel stop is required. Checks the contract and the plan's invariants."
+          }
+        },
+        {
+          "name": "Cross-country: Los Angeles -> New York",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const body = pm.response.json();",
+                  "const stops = body.fuel_stops;",
+                  "",
+                  "pm.test(\"matches the response contract\", () => {",
+                  "    pm.response.to.have.jsonSchema(JSON.parse(pm.collectionVariables.get(\"routeResponseSchema\")));",
+                  "});",
+                  "",
+                  "pm.test(\"total_fuel_cost equals the sum of stop costs\", () => {",
+                  "    const sum = stops.reduce((acc, s) => acc + s.cost, 0);",
+                  "    pm.expect(body.total_fuel_cost).to.be.closeTo(sum, 0.005);",
+                  "});",
+                  "",
+                  "pm.test(\"stops are in driving order and within the trip\", () => {",
+                  "    stops.forEach((s, i) => {",
+                  "        pm.expect(s.mile_marker).to.be.within(0, body.total_distance_miles);",
+                  "        if (i > 0) pm.expect(s.mile_marker).to.be.at.least(stops[i - 1].mile_marker);",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test(\"buys exactly the fuel the trip needs (starts full, arrives empty)\", () => {",
+                  "    const bought = stops.reduce((acc, s) => acc + s.gallons_purchased, 0);",
+                  "    const needed = Math.max(0, (body.total_distance_miles - 500) / 10);",
+                  "    pm.expect(bought).to.be.closeTo(needed, 0.01 * stops.length + 0.06);",
+                  "});",
+                  "",
+                  "pm.test(\"each stop's cost is gallons x price\", () => {",
+                  "    stops.forEach((s) => pm.expect(s.cost).to.be.closeTo(s.gallons_purchased * s.price_per_gallon, 0.006));",
+                  "});",
+                  "pm.test(\"needs several stops\", () => pm.expect(stops.length).to.be.at.least(5));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"Los Angeles, CA\",\n  \"finish\": \"New York, NY\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "~2,800 miles. The minimum number of stops for a 500-mile range is 5."
+          }
+        },
+        {
+          "name": "Short trip: Chicago -> Indianapolis (no stops)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "",
+                  "const body = pm.response.json();",
+                  "const stops = body.fuel_stops;",
+                  "",
+                  "pm.test(\"matches the response contract\", () => {",
+                  "    pm.response.to.have.jsonSchema(JSON.parse(pm.collectionVariables.get(\"routeResponseSchema\")));",
+                  "});",
+                  "",
+                  "pm.test(\"total_fuel_cost equals the sum of stop costs\", () => {",
+                  "    const sum = stops.reduce((acc, s) => acc + s.cost, 0);",
+                  "    pm.expect(body.total_fuel_cost).to.be.closeTo(sum, 0.005);",
+                  "});",
+                  "",
+                  "pm.test(\"stops are in driving order and within the trip\", () => {",
+                  "    stops.forEach((s, i) => {",
+                  "        pm.expect(s.mile_marker).to.be.within(0, body.total_distance_miles);",
+                  "        if (i > 0) pm.expect(s.mile_marker).to.be.at.least(stops[i - 1].mile_marker);",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test(\"buys exactly the fuel the trip needs (starts full, arrives empty)\", () => {",
+                  "    const bought = stops.reduce((acc, s) => acc + s.gallons_purchased, 0);",
+                  "    const needed = Math.max(0, (body.total_distance_miles - 500) / 10);",
+                  "    pm.expect(bought).to.be.closeTo(needed, 0.01 * stops.length + 0.06);",
+                  "});",
+                  "",
+                  "pm.test(\"each stop's cost is gallons x price\", () => {",
+                  "    stops.forEach((s) => pm.expect(s.cost).to.be.closeTo(s.gallons_purchased * s.price_per_gallon, 0.006));",
+                  "});",
+                  "",
+                  "pm.test(\"under 500 miles needs no stops and costs nothing\", () => {",
+                  "    pm.expect(body.total_distance_miles).to.be.below(500);",
+                  "    pm.expect(stops).to.be.empty;",
+                  "    pm.expect(body.total_fuel_cost).to.equal(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"Chicago, IL\",\n  \"finish\": \"Indianapolis, IN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "Under the 500-mile range, and the truck starts with a full tank, so there are no stops."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Errors",
+      "item": [
+        {
+          "name": "400: missing fields",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test(\"reports each missing field\", () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property(\"start\").that.is.an(\"array\");",
+                  "    pm.expect(body).to.have.property(\"finish\").that.is.an(\"array\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "Field validation errors are keyed by field name."
+          }
+        },
+        {
+          "name": "400: field too long",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"flags start\", () => pm.expect(pm.response.json()).to.have.property(\"start\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\n  \"finish\": \"Dallas, TX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "Inputs are capped at 200 characters before anything is sent to the geocoder."
+          }
+        },
+        {
+          "name": "400: location not found",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test(\"explains which location failed\", () => {",
+                  "    pm.expect(pm.response.json().error).to.include(\"zzzqqq nowhere at all\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"zzzqqq nowhere at all\",\n  \"finish\": \"Dallas, TX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "A location the geocoder can't find in the USA."
+          }
+        },
+        {
+          "name": "422: no drivable route (Honolulu -> Chicago)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"has an error message\", () => pm.expect(pm.response.json().error).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"start\": \"Honolulu, HI\",\n  \"finish\": \"Chicago, IL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "Both ends geocode fine, but there's no road between them. OSRM reports this as HTTP 400, which the API maps to 422 rather than mistaking it for an outage."
+          }
+        },
+        {
+          "name": "415: body is not JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 415\", () => pm.response.to.have.status(415));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "start=Chicago&finish=Dallas"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/route/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "route",
+                ""
+              ]
+            },
+            "description": "The endpoint only accepts application/json."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Docs and UI",
+      "item": [
+        {
+          "name": "OpenAPI schema",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"documents /api/route/\", () => pm.expect(pm.response.text()).to.include(\"/api/route/\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/schema/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "schema",
+                ""
+              ]
+            },
+            "description": "Machine-readable contract. Swagger UI is at /api/docs/."
+          }
+        },
+        {
+          "name": "Map page",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"serves HTML\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/html\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Leaflet map UI for the same endpoint."
+          }
+        }
+      ]
+    }
+  ]
+}

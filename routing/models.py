@@ -10,5 +10,8 @@ class FuelStation(models.Model):
     latitude = models.FloatField(null=True, blank=True)
     longitude = models.FloatField(null=True, blank=True)
 
+    class Meta:
+        indexes = [models.Index(fields=["latitude", "longitude"])]  # bounding-box prefilter in stations_along_route
+
     def __str__(self):
         return f"{self.name} ({self.city}, {self.state})"

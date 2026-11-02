@@ -1,7 +1,9 @@
 import csv
+from decimal import Decimal
 from pathlib import Path
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 from routing.models import FuelStation
 
@@ -26,7 +28,7 @@ class Command(BaseCommand):
                 if state not in US_STATES:
                     continue
                 opis_id = int(row["OPIS Truckstop ID"])
-                price = float(row["Retail Price"])
+                price = Decimal(row["Retail Price"].strip())
                 existing = cheapest.get(opis_id)
                 if existing is None or price < existing["price"]:
                     cheapest[opis_id] = {
@@ -36,15 +38,16 @@ class Command(BaseCommand):
                         "price": price,
                     }
 
-        FuelStation.objects.all().delete()
-        FuelStation.objects.bulk_create(
-            FuelStation(
-                opis_id=opis_id,
-                name=data["name"],
-                city=data["city"],
-                state=data["state"],
-                price_per_gallon=data["price"],
+        with transaction.atomic():  # a failed import must not leave the table empty
+            FuelStation.objects.all().delete()
+            FuelStation.objects.bulk_create(
+                FuelStation(
+                    opis_id=opis_id,
+                    name=data["name"],
+                    city=data["city"],
+                    state=data["state"],
+                    price_per_gallon=data["price"].quantize(Decimal("0.0001")),
+                )
+                for opis_id, data in cheapest.items()
             )
-            for opis_id, data in cheapest.items()
-        )
         self.stdout.write(self.style.SUCCESS(f"Imported {len(cheapest)} US fuel stations."))

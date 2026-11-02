@@ -5,7 +5,10 @@ from routing.models import FuelStation
 
 EARTH_RADIUS_MILES = 3958.8
 STATION_SEARCH_RADIUS_MILES = 15
-GRID_CELL_DEGREES = 0.25  # ~17 miles; a 3x3 block of cells comfortably covers the 15-mile search radius
+# A station's 3x3 block of cells is guaranteed to contain every sample within
+# one cell-width of it, so a cell must be >= the search radius on both axes.
+# Longitude degrees shrink with latitude: 0.5 deg is >= 15 mi up to ~64 N.
+GRID_CELL_DEGREES = 0.5
 
 
 def haversine_miles(lat1, lon1, lat2, lon2):
@@ -18,20 +21,27 @@ def haversine_miles(lat1, lon1, lat2, lon2):
 
 def sample_route(coordinates, step_miles=5):
     """coordinates: [[lon, lat], ...] from OSRM. Returns (samples, total_miles) where
-    samples is a list of (lat, lon, cumulative_miles) spaced ~step_miles apart."""
-    first_lon, first_lat = coordinates[0]
-    samples = [(first_lat, first_lon, 0.0)]
+    samples is a list of (lat, lon, cumulative_miles) exactly step_miles apart.
+
+    Points are interpolated *inside* segments: simplified geometry can have
+    vertices 50+ miles apart, and sampling only at vertices would miss stations
+    that sit right next to the road between them."""
+    prev_lon, prev_lat = coordinates[0]
+    samples = [(prev_lat, prev_lon, 0.0)]
     cumulative = 0.0
-    last_lat, last_lon = first_lat, first_lon
+    next_sample_at = step_miles
 
     for lon, lat in coordinates[1:]:
-        cumulative += haversine_miles(last_lat, last_lon, lat, lon)
-        if cumulative - samples[-1][2] >= step_miles:
-            samples.append((lat, lon, cumulative))
-        last_lat, last_lon = lat, lon
+        segment = haversine_miles(prev_lat, prev_lon, lat, lon)
+        while segment > 0 and next_sample_at <= cumulative + segment:
+            t = (next_sample_at - cumulative) / segment
+            samples.append((prev_lat + t * (lat - prev_lat), prev_lon + t * (lon - prev_lon), next_sample_at))
+            next_sample_at += step_miles
+        cumulative += segment
+        prev_lon, prev_lat = lon, lat
 
-    if samples[-1][2] != cumulative:
-        samples.append((last_lat, last_lon, cumulative))
+    if samples[-1][2] < cumulative:
+        samples.append((prev_lat, prev_lon, cumulative))
     return samples, cumulative
 
 
@@ -57,12 +67,10 @@ def stations_along_route(samples, max_distance_miles=STATION_SEARCH_RADIUS_MILES
     """Returns [(station, mile_marker), ...] sorted by mile_marker, one entry per
     station whose nearest sampled route point is within max_distance_miles.
 
-    Brute force would be O(stations x samples) haversine calls — with a few
-    hundred candidate stations and a few hundred samples on a long route, that's
-    tens of thousands of trig calls and was the dominant cost of the whole
-    request. Bucketing samples into a lat/lon grid and only checking a station's
-    own cell plus its 8 neighbors cuts the inner loop from "every sample" to
-    "the handful of samples actually nearby"."""
+    Brute force is O(stations x samples) haversine calls (~280K on a
+    coast-to-coast route, 1.5s). Bucketing samples into a lat/lon grid and
+    checking only a station's own cell plus its 8 neighbors gives the same
+    result while touching just the samples that are actually nearby."""
     lats = [lat for lat, _, _ in samples]
     lons = [lon for _, lon, _ in samples]
     pad = 1.0  # degrees of padding so the bounding-box prefilter doesn't clip edge stations

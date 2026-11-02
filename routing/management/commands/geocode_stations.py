@@ -31,17 +31,17 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         centroids = load_city_state_centroids()
-        stations = FuelStation.objects.filter(latitude__isnull=True)
-        total = stations.count()
+        stations = list(FuelStation.objects.filter(latitude__isnull=True))
+        total = len(stations)
 
-        matched = 0
-        for station in stations.iterator():
-            coords = centroids.get((station.city.strip().lower(), station.state.strip()))
+        matched = []
+        for station in stations:
+            coords = centroids.get((station.city.lower(), station.state))
             if coords:
                 station.latitude, station.longitude = coords
-                station.save(update_fields=["latitude", "longitude"])
-                matched += 1
+                matched.append(station)
+        FuelStation.objects.bulk_update(matched, ["latitude", "longitude"], batch_size=500)
 
-        self.stdout.write(self.style.SUCCESS(f"Geocoded {matched}/{total} stations."))
-        if matched < total:
-            self.stdout.write(f"{total - matched} stations had no exact city/state match in the gazetteer.")
+        self.stdout.write(self.style.SUCCESS(f"Geocoded {len(matched)}/{total} stations."))
+        if len(matched) < total:
+            self.stdout.write(f"{total - len(matched)} stations had no exact city/state match in the gazetteer.")
