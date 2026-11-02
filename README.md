@@ -25,7 +25,7 @@ python manage.py runserver
 ```
 
 ```bash
-python manage.py test routing         # 20 unit tests, ~0.5s, no network access needed
+python manage.py test routing         # 24 unit tests, under 1s, no network access needed
 ```
 
 To test the running server end to end, import the Postman collection (Import → File) and hit **Run**, or use the CLI:
@@ -54,25 +54,28 @@ curl -X POST http://127.0.0.1:8000/api/route/ \
 | `start`  | string | Starting location in the USA, max 200 chars  |
 | `finish` | string | Destination in the USA, max 200 chars        |
 
+Locations in the form `City, ST`, `City, State` or a ZIP code are resolved offline. Anything else, such as a
+street address, is sent to an online geocoder.
+
 **Response `200`** (real output; route coordinates truncated)
 
 ```json
 {
   "total_distance_miles": 966.9,
-  "total_fuel_cost": 134.77,
+  "total_fuel_cost": 134.8,
   "route_geometry": {
     "type": "LineString",
-    "coordinates": [[-87.624351, 41.875563], [-87.624983, 41.719186], [-87.866987, 41.219737]]
+    "coordinates": [[-87.675896, 41.854215], [-87.624684, 41.720145], [-87.866842, 41.220226]]
   },
   "fuel_stops": [
     {"name": "HUCKS FOOD & FUEL #379", "city": "Marion", "state": "IL", "price_per_gallon": 2.929,
-     "mile_marker": 313.8, "gallons_purchased": 29.23, "cost": 85.61, "latitude": 37.7257, "longitude": -88.9294},
+     "mile_marker": 314.5, "gallons_purchased": 29.4, "cost": 86.11, "latitude": 37.7257, "longitude": -88.9294},
     {"name": "Quiktrip #7900", "city": "Texarkana", "state": "TX", "price_per_gallon": 2.857,
-     "mile_marker": 792.3, "gallons_purchased": 1.03, "cost": 2.94, "latitude": 33.435983, "longitude": -94.078233},
+     "mile_marker": 794.0, "gallons_purchased": 1.03, "cost": 2.94, "latitude": 33.435983, "longitude": -94.078233},
     {"name": "EXTRA MILE TRUCK STOP", "city": "Hooks", "state": "TX", "price_per_gallon": 2.817,
-     "mile_marker": 802.6, "gallons_purchased": 12.35, "cost": 34.79, "latitude": 33.5253, "longitude": -94.2657},
+     "mile_marker": 804.3, "gallons_purchased": 12.37, "cost": 34.85, "latitude": 33.5253, "longitude": -94.2657},
     {"name": "CADOO MILLS", "city": "Caddo Mills", "state": "TX", "price_per_gallon": 2.801,
-     "mile_marker": 926.1, "gallons_purchased": 4.08, "cost": 11.43, "latitude": 33.0683, "longitude": -96.2391}
+     "mile_marker": 928.0, "gallons_purchased": 3.89, "cost": 10.9, "latitude": 33.0683, "longitude": -96.2391}
   ]
 }
 ```
@@ -99,12 +102,14 @@ All monetary and quantity fields are JSON numbers: prices to 3 decimal places, g
 
 ## How it works
 
-1. **Geocode** `start` and `finish` with Nominatim (2 calls, made concurrently, results cached).
+1. **Geocode** `start` and `finish` offline against the same gazetteer used for the stations. Only free-text input
+   (e.g. a street address) falls back to Nominatim.
 2. **Route** with OSRM (1 call).
 3. **Match stations** to the route locally: sample the route every 5 miles and keep stations within 15 miles of it.
 4. **Plan stops** with the greedy algorithm below, using the prices already in the database.
 
-That's **3 external calls per request, regardless of trip length**. Everything after the route call is local.
+A typical request makes **exactly 1 external call** (the route), regardless of trip length: the "ideal" from the
+brief. The worst case, with two street addresses, is 3.
 
 ## Design decisions
 
@@ -131,6 +136,9 @@ per-stop cost (time is money for a trucker) to the objective.
   (`routing/data/us_zip_codes.txt`). I avoided Nominatim here on purpose: its usage policy forbids bulk geocoding,
   and ~6,600 lookups risk an IP ban that would also break live requests. 6,618 of 6,626 stations match. The other 8
   are spelling mismatches across just three towns (`Winston Salem` vs `Winston-Salem`, `De Forest`, `Mc Leansville`).
+- The same gazetteer resolves request inputs, which takes 2 of the 3 external calls off a typical request. A city
+  resolves to the average of its ZIP centroids. That point is a few miles from Nominatim's, which is irrelevant
+  for route planning.
 
 ### Performance
 Profiled per stage on a Los Angeles → New York request (2,794 miles):
@@ -139,8 +147,8 @@ Profiled per stage on a Los Angeles → New York request (2,794 miles):
 |-----------------------|--------|--------|------------------------------------------------------------------------|
 | Station matching      | 1.56s  | ~0.1s  | Brute-force O(stations × samples) → lat/lon grid; check only 3×3 neighboring cells |
 | Routing call          | 1.44s  | ~0.2s  | OSRM `overview=simplified`: 53 points instead of 33,852, payload 787 KB → 2 KB |
-| Geocoding (×2)        | 1.21s  | ~0.25–0.6s | Two lookups run concurrently instead of back to back, plus an LRU cache   |
-| **End to end**        | **4.4s** | **~0.8–1.1s cold, ~0.3–0.4s warm** |                                          |
+| Geocoding (×2)        | 1.21s  | ~0     | Resolved offline from the gazetteer (0.17s one-time load); Nominatim fallback only for free text |
+| **End to end**        | **4.4s** | **~0.2–0.6s cold, ~0.2–0.3s warm** | Dominated by the single OSRM call            |
 
 Correctness is protected around both optimizations:
 - **Simplified geometry:** route samples are *interpolated* between the now-sparse vertices, so stations between
@@ -148,8 +156,10 @@ Correctness is protected around both optimizations:
 - **Grid lookup:** a test checks it returns the same stations as brute force on 800 random stations.
 
 ## Limitations and next steps
-- **Free public services.** The OSRM demo server and Nominatim have no SLA, and Nominatim asks for ≤ 1 request/s.
-  That's fine for a demo. For production I'd self-host OSRM and use a commercial geocoder.
+- **Free public services.** The OSRM demo server has no SLA. Nominatim (only used for free-text input now) asks for
+  ≤ 1 request/s. For production I'd self-host OSRM and put a commercial geocoder behind the fallback.
+- **Strict input matching.** Offline lookup needs the gazetteer's spelling (`Saint Louis, MO`). Variants like
+  `St. Louis, MO` still work, but they cost a Nominatim call.
 - **City-level stations.** Exit-level accuracy would need a geocoder that understands highway exits, or a better source dataset.
 - **Scale.** At 6.6k stations, a bounding-box query plus Python haversine is fast. At 100× that, I'd move matching
   into PostGIS (`ST_DWithin` on the route line).
@@ -163,7 +173,8 @@ routing/
   views.py                  POST /api/route/ and the map page
   serializers.py            Request/response contract (drives the OpenAPI spec)
   services/
-    route_client.py         Nominatim + OSRM clients; maps failures to typed exceptions
+    gazetteer.py            Offline "City, ST" / ZIP lookup (stations and request inputs)
+    route_client.py         Geocoding (offline first, Nominatim fallback) + OSRM; typed exceptions
     geometry.py             Route sampling and grid-indexed station matching
     planner.py              Minimum-cost fuel stop algorithm
   management/commands/      import_fuel_prices, geocode_stations

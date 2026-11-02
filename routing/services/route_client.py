@@ -2,6 +2,8 @@ from functools import lru_cache
 
 import requests
 
+from . import gazetteer
+
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_BASE_URL = "http://router.project-osrm.org/route/v1/driving"
 METERS_PER_MILE = 1609.344
@@ -21,6 +23,10 @@ class UpstreamUnavailable(Exception):
 
 @lru_cache(maxsize=256)
 def geocode_address(address):
+    # "City, ST" / "City, State" / ZIP resolve offline; only free text hits Nominatim.
+    coords = gazetteer.lookup(address)
+    if coords:
+        return coords
     try:
         resp = requests.get(
             NOMINATIM_URL,

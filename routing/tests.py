@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.test import Client, SimpleTestCase, TestCase
 
 from routing.models import FuelStation
-from routing.services import geometry, planner, route_client
+from routing.services import gazetteer, geometry, planner, route_client
 from routing.services.planner import VEHICLE_RANGE_MILES, InfeasibleRoute, plan_fuel_stops
 
 
@@ -217,7 +217,38 @@ class RouteApiTests(TestCase):
         self.assertEqual(resp.status_code, 200)
 
 
+class GazetteerTests(SimpleTestCase):
+    def test_resolves_city_state_and_zip_forms(self):
+        chicago = gazetteer.lookup("Chicago, IL")
+        self.assertIsNotNone(chicago)
+        self.assertAlmostEqual(chicago[0], 41.85, delta=0.2)
+        self.assertAlmostEqual(chicago[1], -87.68, delta=0.2)
+        for variant in ("chicago, illinois", "Chicago, IL, USA", "  Chicago ,  il  "):
+            self.assertEqual(gazetteer.lookup(variant), chicago, variant)
+        self.assertIsNotNone(gazetteer.lookup("60601"))
+        self.assertEqual(gazetteer.lookup("60601-1234"), gazetteer.lookup("60601"))
+
+    def test_returns_none_for_anything_else(self):
+        for text in ("123 Main St", "Atlantis, IL", "Chicago", "Chicago, Narnia", "99999"):
+            self.assertIsNone(gazetteer.lookup(text), text)
+
+
 class RouteClientTests(SimpleTestCase):
+    def setUp(self):
+        route_client.geocode_address.cache_clear()
+
+    @patch("routing.services.route_client.requests.get")
+    def test_city_state_input_makes_no_network_call(self, get):
+        route_client.geocode_address("Dallas, TX")
+        get.assert_not_called()
+
+    @patch("routing.services.route_client.requests.get")
+    def test_free_text_falls_back_to_nominatim(self, get):
+        get.return_value.json.return_value = [{"lat": "41.8789", "lon": "-87.6359"}]
+
+        self.assertEqual(route_client.geocode_address("233 S Wacker Dr, Chicago"), (41.8789, -87.6359))
+        self.assertIn("nominatim", get.call_args.args[0])
+
     @patch("routing.services.route_client.requests.get", side_effect=requests.ConnectionError("down"))
     def test_network_failure_becomes_upstream_unavailable(self, _get):
         with self.assertRaises(route_client.UpstreamUnavailable):

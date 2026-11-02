@@ -11,8 +11,9 @@ paths:
       description: Geocodes `start` and `finish`, fetches the driving route, and returns
         the minimum-cost set of fuel stops for a vehicle with a 500-mile range at
         10 MPG. The vehicle is assumed to depart with a full tank, so trips under
-        500 miles need no stops. Makes 3 external calls (2 geocode, 1 route) regardless
-        of distance.
+        500 miles need no stops. `City, ST`, `City, State` and ZIP inputs are geocoded
+        offline, so a typical request makes exactly 1 external call (routing). Free-text
+        addresses fall back to an online geocoder (up to 3 calls).
       summary: Plan a route with the cheapest fuel stops
       tags:
       - route
@@ -40,31 +41,31 @@ paths:
                 ChicagoToDallas:
                   value:
                     total_distance_miles: 966.9
-                    total_fuel_cost: 134.77
+                    total_fuel_cost: 134.8
                     route_geometry:
                       type: LineString
                       coordinates:
-                      - - -87.624351
-                        - 41.875563
-                      - - -87.624983
-                        - 41.719186
-                      - - -87.866987
-                        - 41.219737
+                      - - -87.675896
+                        - 41.854215
+                      - - -87.624684
+                        - 41.720145
+                      - - -87.866842
+                        - 41.220226
                     fuel_stops:
                     - name: 'HUCKS FOOD & FUEL #379'
                       city: Marion
                       state: IL
                       price_per_gallon: 2.929
-                      mile_marker: 313.8
-                      gallons_purchased: 29.23
-                      cost: 85.61
+                      mile_marker: 314.5
+                      gallons_purchased: 29.4
+                      cost: 86.11
                       latitude: 37.7257
                       longitude: -88.9294
                     - name: 'Quiktrip #7900'
                       city: Texarkana
                       state: TX
                       price_per_gallon: 2.857
-                      mile_marker: 792.3
+                      mile_marker: 794.0
                       gallons_purchased: 1.03
                       cost: 2.94
                       latitude: 33.435983
@@ -73,18 +74,18 @@ paths:
                       city: Hooks
                       state: TX
                       price_per_gallon: 2.817
-                      mile_marker: 802.6
-                      gallons_purchased: 12.35
-                      cost: 34.79
+                      mile_marker: 804.3
+                      gallons_purchased: 12.37
+                      cost: 34.85
                       latitude: 33.5253
                       longitude: -94.2657
                     - name: CADOO MILLS
                       city: Caddo Mills
                       state: TX
                       price_per_gallon: 2.801
-                      mile_marker: 926.1
-                      gallons_purchased: 4.08
-                      cost: 11.43
+                      mile_marker: 928.0
+                      gallons_purchased: 3.89
+                      cost: 10.9
                       latitude: 33.0683
                       longitude: -96.2391
                   summary: Chicago to Dallas
