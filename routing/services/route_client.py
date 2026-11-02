@@ -1,9 +1,12 @@
+from functools import lru_cache
+
 import requests
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_BASE_URL = "http://router.project-osrm.org/route/v1/driving"
 
 
+@lru_cache(maxsize=256)
 def geocode_address(address):
     resp = requests.get(
         NOMINATIM_URL,
@@ -20,7 +23,12 @@ def geocode_address(address):
 
 def get_route(start_lat, start_lon, end_lat, end_lon):
     url = f"{OSRM_BASE_URL}/{start_lon},{start_lat};{end_lon},{end_lat}"
-    resp = requests.get(url, params={"overview": "full", "geometries": "geojson"}, timeout=15)
+    # "simplified" keeps the real route shape (OSRM's own Douglas-Peucker
+    # simplification) at a fraction of the payload size/parse time of "full" —
+    # fine here since we only need the polyline for station matching and the
+    # map display, not turn-by-turn precision. The authoritative distance
+    # below always comes from OSRM's own measurement, independent of this.
+    resp = requests.get(url, params={"overview": "simplified", "geometries": "geojson"}, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     if data.get("code") != "Ok":
